@@ -18,15 +18,17 @@ public class ClanCatsMod implements ModInitializer {
     }
 
     /** Per-player cat state. Survives death and restarts. */
-    public static final AttachmentType<CatData> CAT_DATA = AttachmentRegistry.create(
-            id("cat_data"),
-            b -> b.initializer(() -> CatData.DEFAULT).persistent(CatData.CODEC).copyOnDeath());
+    public static final AttachmentType<CatData> CAT_DATA = AttachmentRegistry.<CatData>builder()
+            .initializer(() -> CatData.DEFAULT)
+            .persistent(CatData.CODEC)
+            .copyOnDeath()
+            .buildAndRegister(id("cat_data"));
 
     /** Clan camp locations (clan id -> position), stored on the overworld. */
-    public static final AttachmentType<Map<String, BlockPos>> CAMPS = AttachmentRegistry.create(
-            id("camps"),
-            b -> b.initializer(() -> Map.<String, BlockPos>of())
-                    .persistent(Codec.unboundedMap(Codec.STRING, BlockPos.CODEC)));
+    public static final AttachmentType<Map<String, BlockPos>> CAMPS = AttachmentRegistry.<Map<String, BlockPos>>builder()
+            .initializer(() -> Map.<String, BlockPos>of())
+            .persistent(Codec.unboundedMap(Codec.STRING, BlockPos.CODEC))
+            .buildAndRegister(id("camps"));
 
     @Override
     public void onInitialize() {
