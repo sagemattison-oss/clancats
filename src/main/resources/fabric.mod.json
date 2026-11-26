@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "clancats",
+  "version": "${version}",
+  "name": "Clan Cats",
+  "description": "Become a cat and live in a clan-based wild cat world: hunt prey, earn ranks, join a clan, and (if you reach the top) earn nine lives.",
+  "authors": ["You"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.example.clancats.ClanCatsMod"],
+    "client": ["com.example.clancats.client.ClanCatsClient"]
+  },
+  "mixins": [
+    { "config": "clancats.client.mixins.json", "environment": "client" }
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
