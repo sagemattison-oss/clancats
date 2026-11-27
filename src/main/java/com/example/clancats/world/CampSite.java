@@ -11,4 +11,7 @@ public interface CampSite {
 
     /** Height of the rock's top above {@link #center()} (where the clan wool goes). */
     int markerY();
+
+    /** {@link CampSpots#CAVE} or {@link CampSpots#SURFACE}. */
+    int kind();
 }

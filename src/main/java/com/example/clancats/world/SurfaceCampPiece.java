@@ -74,6 +74,11 @@ public class SurfaceCampPiece extends StructurePiece implements CampSite {
     }
 
     @Override
+    public int kind() {
+        return CampSpots.SURFACE;
+    }
+
+    @Override
     public void generate(StructureWorldAccess world, StructureAccessor structureAccessor, ChunkGenerator chunkGenerator,
                          Random random, BlockBox chunkBox, ChunkPos chunkPos, BlockPos pivot) {
         BlockBox box = this.boundingBox;

@@ -8,22 +8,25 @@ import java.util.Optional;
 
 /** Four original clans. Rename or add your own. */
 public enum CatClan {
-    ASH("ash", "AshClan", Formatting.GRAY, Blocks.GRAY_WOOL),
-    BROOK("brook", "BrookClan", Formatting.AQUA, Blocks.LIGHT_BLUE_WOOL),
-    BRAMBLE("bramble", "BrambleClan", Formatting.GREEN, Blocks.GREEN_WOOL),
-    CREST("crest", "CrestClan", Formatting.GOLD, Blocks.ORANGE_WOOL);
+    ASH("ash", "AshClan", Formatting.GRAY, Blocks.GRAY_WOOL, Blocks.GRAY_BANNER),
+    BROOK("brook", "BrookClan", Formatting.AQUA, Blocks.LIGHT_BLUE_WOOL, Blocks.LIGHT_BLUE_BANNER),
+    BRAMBLE("bramble", "BrambleClan", Formatting.GREEN, Blocks.GREEN_WOOL, Blocks.GREEN_BANNER),
+    CREST("crest", "CrestClan", Formatting.GOLD, Blocks.ORANGE_WOOL, Blocks.ORANGE_BANNER);
 
     public final String id;
     public final String display;
     public final Formatting color;
     /** Wool placed on top of the Great Rock when a camp is claimed. */
     public final Block marker;
+    /** Standing banner (the clan's flag) shown around claimed camps. */
+    public final Block banner;
 
-    CatClan(String id, String display, Formatting color, Block marker) {
+    CatClan(String id, String display, Formatting color, Block marker, Block banner) {
         this.id = id;
         this.display = display;
         this.color = color;
         this.marker = marker;
+        this.banner = banner;
     }
 
     public static Optional<CatClan> byId(String id) {

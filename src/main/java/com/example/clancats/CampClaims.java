@@ -30,6 +30,14 @@ public final class CampClaims {
         save(server, list);
     }
 
+    public static void replace(MinecraftServer server, CampClaim old, CampClaim next) {
+        List<CampClaim> list = new ArrayList<>(all(server));
+        int i = list.indexOf(old);
+        if (i >= 0) list.set(i, next);
+        else list.add(next);
+        save(server, list);
+    }
+
     public static void remove(MinecraftServer server, CampClaim claim) {
         List<CampClaim> list = new ArrayList<>(all(server));
         list.remove(claim);

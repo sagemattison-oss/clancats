@@ -4,6 +4,10 @@ import com.example.clancats.entity.ModEntities;
 import com.example.clancats.entity.WildCatEntity;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.LadderBlock;
+import net.minecraft.util.math.Direction;
+import net.minecraft.world.Heightmap;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.structure.StructureContext;
@@ -69,6 +73,11 @@ public class CampPiece extends StructurePiece implements CampSite {
     }
 
     @Override
+    public int kind() {
+        return CampSpots.CAVE;
+    }
+
+    @Override
     public void generate(StructureWorldAccess world, StructureAccessor structureAccessor, ChunkGenerator chunkGenerator,
                          Random random, BlockBox chunkBox, ChunkPos chunkPos, BlockPos pivot) {
         BlockBox box = this.boundingBox;
@@ -94,6 +103,29 @@ public class CampPiece extends StructurePiece implements CampSite {
                     BlockState state = layout.blockAt(has, col, lx, y - fy, lz);
                     if (state != null) {
                         world.setBlockState(pos.set(x, y, z), state, Block.NOTIFY_LISTENERS);
+                    }
+                }
+
+                // Ladder shafts: a ladder column from the cavern floor up to the surface, carried by a log
+                // post that also sticks up out of the ground so the shaft is easy to spot.
+                int shaft = CampLayout.shaft(lx, lz);
+                if (shaft != 0) {
+                    int gy = world.getTopY(Heightmap.Type.OCEAN_FLOOR_WG, x, z);
+                    if (shaft == 2) {
+                        BlockState log = Blocks.OAK_LOG.getDefaultState();
+                        for (int y = Math.max(minY, fy); y <= Math.min(maxY, gy + 1); y++) {
+                            world.setBlockState(pos.set(x, y, z), log, Block.NOTIFY_LISTENERS);
+                        }
+                    } else {
+                        int fz = CampLayout.shaftFacingZ(lz);
+                        int fdx = CampLayout.worldDX(rot, 0, fz);
+                        int fdz = CampLayout.worldDZ(rot, 0, fz);
+                        Direction face = fdx > 0 ? Direction.EAST : fdx < 0 ? Direction.WEST
+                                : fdz > 0 ? Direction.SOUTH : Direction.NORTH;
+                        BlockState ladder = Blocks.LADDER.getDefaultState().with(LadderBlock.FACING, face);
+                        for (int y = Math.max(minY, fy); y <= Math.min(maxY, gy - 1); y++) {
+                            world.setBlockState(pos.set(x, y, z), ladder, Block.NOTIFY_LISTENERS);
+                        }
                     }
                 }
             }

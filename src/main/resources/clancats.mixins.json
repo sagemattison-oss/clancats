@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "com.example.clancats.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["FleeEntityGoalMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

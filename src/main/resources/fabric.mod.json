@@ -3,7 +3,7 @@
   "id": "clancats",
   "version": "${version}",
   "name": "Clan Cats",
-  "description": "Become a cat and live in a clan-based wild cat world: hunt prey, earn ranks, join a clan, and (if you reach the top) earn nine lives.",
+  "description": "Become a cat and live in a clan-based wild cat world: hunt prey, earn ranks, join a clan, claim camps and grow them.",
   "authors": ["You"],
   "license": "MIT",
   "environment": "*",
@@ -12,6 +12,7 @@
     "client": ["com.example.clancats.client.ClanCatsClient"]
   },
   "mixins": [
+    "clancats.mixins.json",
     { "config": "clancats.client.mixins.json", "environment": "client" }
   ],
   "depends": {

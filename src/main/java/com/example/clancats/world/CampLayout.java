@@ -102,6 +102,24 @@ public final class CampLayout {
                 center.getZ() + worldDZ(rot, BARREL_LX, BARREL_LZ));
     }
 
+    /** Ladder shafts: local ladder columns. Each has a log post one block further from the centre. */
+    private static final int[][] SHAFTS = {{-2, 10}, {-2, -10}};
+
+    /** 1 = ladder column, 2 = log post column, 0 = neither. */
+    public static int shaft(int lx, int lz) {
+        for (int[] s : SHAFTS) {
+            if (lx != s[0]) continue;
+            if (lz == s[1]) return 1;
+            if (lz == s[1] + (s[1] > 0 ? 1 : -1)) return 2;
+        }
+        return 0;
+    }
+
+    /** The ladder faces toward the cavern centre (the post is behind it). */
+    public static int shaftFacingZ(int lz) {
+        return lz > 0 ? -1 : 1;
+    }
+
     static int hash(long seed, int x, int y, int z) {
         long h = seed ^ (x * 341873128712L) ^ (y * 132897987541L) ^ (z * 42317861L);
         h = (h ^ (h >>> 33)) * 0xff51afd7ed558ccdL;

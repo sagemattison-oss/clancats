@@ -1,13 +1,19 @@
 package com.example.clancats.entity;
 
 import com.example.clancats.CampClaims;
+import com.example.clancats.CampUpgrade;
 import com.example.clancats.CatAbilities;
 import com.example.clancats.CatEvents;
+import com.example.clancats.CatNames;
+import com.example.clancats.ClanCatsMod;
+import com.example.clancats.OpenRecruitPayload;
 import com.example.clancats.data.CampClaim;
 import com.example.clancats.data.CatClan;
 import com.example.clancats.data.CatData;
 import com.example.clancats.world.CampLayout;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EntityData;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
@@ -19,6 +25,10 @@ import net.minecraft.entity.ai.goal.LookAtEntityGoal;
 import net.minecraft.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.entity.ai.goal.SwimGoal;
 import net.minecraft.entity.ai.goal.WanderAroundFarGoal;
+import net.minecraft.entity.attribute.EntityAttribute;
+import net.minecraft.entity.attribute.EntityAttributeInstance;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.CreeperEntity;
@@ -30,6 +40,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.particle.ParticleTypes;
+import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.MutableText;
@@ -37,6 +48,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.world.LocalDifficulty;
@@ -50,16 +62,16 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * A loner cat. Feed it fish or meat while you belong to a clan with a claimed camp and it joins
- * your clan: it goes to your nearest camp and works there as a Hunter, Guard or Healer.
- * Recruited cats can also be told to follow you; they keep doing their job while they follow,
- * and go back to the nearest camp when told to stop.
+ * A loner cat. Feed it fish or meat while you belong to a clan with a claimed camp and a screen lets you
+ * name it and pick its job; it then joins your clan and works from your nearest camp. Recruits can be told
+ * to follow you (they keep doing their job) and go back to camp when told to stop. Camps with a nursery
+ * bear kits, which grow into apprentices and (with a training ground) warriors.
  */
 public class WildCatEntity extends CatEntity {
-    private static final String[] NAMES = {
-            "Fern", "Thistle", "Moth", "Sorrel", "Wren", "Pebble", "Marigold", "Cinder",
-            "Dusk", "Sparrow", "Clover", "Flint", "Willow", "Rowan", "Juniper", "Gorse"
-    };
+    public enum Stage { KIT, APPRENTICE, WARRIOR }
+
+    private static final Identifier BONUS_ID = ClanCatsMod.id("npc_bonus");
+
     private static final String[] WILD_LINES = {
             "I've walked alone since the last leaf-fall. Why would I trust a clan?",
             "Hmm. A fresh bite of fish might make me listen.",
@@ -87,10 +99,17 @@ public class WildCatEntity extends CatEntity {
             "Right behind you.",
             "I'll watch your tail."
     };
+    private static final String[] KIT_LINES = {
+            "Mew! Are you a real warrior?",
+            "Can I come hunting too? Please?",
+            "I'm going to be the best hunter ever!"
+    };
 
     private String catName = "";
     private String clanId = "";
     private CatJob job = CatJob.HUNTER;
+    private Stage stage = Stage.WARRIOR;
+    private int rankTicks = 0;
     private int jobCooldown = 0;
     private UUID followId = null;
     private int lostTicks = 0;
@@ -105,6 +124,14 @@ public class WildCatEntity extends CatEntity {
 
     public boolean isFollowing() {
         return followId != null;
+    }
+
+    public boolean isKit() {
+        return stage == Stage.KIT;
+    }
+
+    public String getClanId() {
+        return clanId;
     }
 
     // ------------------------------------------------------------------ setup
@@ -123,17 +150,18 @@ public class WildCatEntity extends CatEntity {
         this.goalSelector.add(7, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
         this.goalSelector.add(8, new LookAroundGoal(this));
         this.targetSelector.add(1, new ActiveTargetGoal<>(this, HostileEntity.class, 10, true, false,
-                e -> isRecruited() && job == CatJob.GUARD && !(e instanceof CreeperEntity) && nearPost(e)));
+                e -> isRecruited() && job == CatJob.GUARD && stage != Stage.KIT
+                        && !(e instanceof CreeperEntity) && nearPost(e)));
     }
 
     @Override
     public EntityData initialize(ServerWorldAccess world, LocalDifficulty difficulty, SpawnReason spawnReason,
                                  EntityData entityData) {
         EntityData data = super.initialize(world, difficulty, spawnReason, entityData);
-        setBreedingAge(0); // always an adult
+        setBreedingAge(0); // adult unless becomeKit() says otherwise
         setPersistent();
         if (catName.isEmpty()) {
-            catName = NAMES[world.getRandom().nextInt(NAMES.length)];
+            catName = CatNames.random();
             refreshName();
         }
         return data;
@@ -145,6 +173,8 @@ public class WildCatEntity extends CatEntity {
         nbt.putString("CatName", catName);
         nbt.putString("ClanId", clanId);
         nbt.putString("Job", job.name());
+        nbt.putString("Stage", stage.name());
+        nbt.putInt("RankTicks", rankTicks);
         nbt.putString("Follow", followId == null ? "" : followId.toString());
     }
 
@@ -158,6 +188,12 @@ public class WildCatEntity extends CatEntity {
         } catch (IllegalArgumentException e) {
             job = CatJob.HUNTER;
         }
+        try {
+            stage = Stage.valueOf(nbt.getString("Stage"));
+        } catch (IllegalArgumentException e) {
+            stage = Stage.WARRIOR;
+        }
+        rankTicks = nbt.getInt("RankTicks");
         String f = nbt.getString("Follow");
         try {
             followId = f.isEmpty() ? null : UUID.fromString(f);
@@ -174,7 +210,12 @@ public class WildCatEntity extends CatEntity {
         if (clan == null) {
             name = Text.literal(catName + " (Loner)").formatted(Formatting.GRAY);
         } else {
-            MutableText tag = Text.literal("(" + job.title + (isFollowing() ? ", following" : "") + ")")
+            String role = switch (stage) {
+                case KIT -> "Kit";
+                case APPRENTICE -> "Apprentice " + job.title;
+                case WARRIOR -> job.title;
+            };
+            MutableText tag = Text.literal("(" + role + (isFollowing() ? ", following" : "") + ")")
                     .formatted(Formatting.WHITE);
             name = Text.literal(catName + " ")
                     .append(Text.literal("[" + clan.display + "] ").formatted(clan.color))
@@ -182,6 +223,67 @@ public class WildCatEntity extends CatEntity {
         }
         setCustomName(name);
         setCustomNameVisible(true);
+    }
+
+    private static String clean(String s) {
+        String t = s == null ? "" : s.replace("\u00a7", "").trim();
+        return t.length() > 24 ? t.substring(0, 24) : t;
+    }
+
+    // ------------------------------------------------------------------ camp lookups
+    private Optional<CampClaim> homeClaim() {
+        if (!(getWorld() instanceof ServerWorld sw) || !isRecruited()) return Optional.empty();
+        return CampClaims.nearest(sw.getServer(), clanId, getPos());
+    }
+
+    private boolean homeHas(CampUpgrade u) {
+        return homeClaim().map(c -> c.has(u)).orElse(false);
+    }
+
+    private void tellClan(String message) {
+        if (!(getWorld() instanceof ServerWorld sw)) return;
+        CatClan clan = CatClan.byId(clanId).orElse(null);
+        Formatting color = clan != null ? clan.color : Formatting.WHITE;
+        for (ServerPlayerEntity p : sw.getServer().getPlayerManager().getPlayerList()) {
+            if (CatAbilities.data(p).clan().equals(clanId)) {
+                p.sendMessage(Text.literal(message).formatted(color), false);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ kits & training
+    /** Turns this cat into a clan kit born at the given nursery. */
+    public void becomeKit(String clan, BlockPos nursery) {
+        clanId = clan;
+        stage = Stage.KIT;
+        rankTicks = 0;
+        CatJob[] jobs = CatJob.values();
+        job = jobs[getRandom().nextInt(jobs.length)];
+        catName = CatNames.kit();
+        setBreedingAge(-6000); // five minutes until it grows up
+        setPersistent();
+        setPositionTarget(nursery, 6);
+        refreshName();
+    }
+
+    private void setBonus(RegistryEntry<EntityAttribute> attr, double value, EntityAttributeModifier.Operation op) {
+        EntityAttributeInstance inst = getAttributeInstance(attr);
+        if (inst == null) return;
+        inst.removeModifier(BONUS_ID);
+        if (value != 0.0) inst.addPersistentModifier(new EntityAttributeModifier(BONUS_ID, value, op));
+    }
+
+    /** Warriors are tougher; border-patrol guards hit harder and move faster. */
+    private void refreshBonuses() {
+        if (!isRecruited()) return;
+        boolean warrior = stage == Stage.WARRIOR;
+        boolean patrol = job == CatJob.GUARD && stage != Stage.KIT && homeHas(CampUpgrade.BORDER_PATROL);
+        setBonus(EntityAttributes.GENERIC_MAX_HEALTH, warrior ? 6.0 : 0.0, EntityAttributeModifier.Operation.ADD_VALUE);
+        setBonus(EntityAttributes.GENERIC_ATTACK_DAMAGE, (warrior ? 1.5 : 0.0) + (patrol ? 2.0 : 0.0),
+                EntityAttributeModifier.Operation.ADD_VALUE);
+        setBonus(EntityAttributes.GENERIC_MOVEMENT_SPEED, patrol ? 0.15 : 0.0,
+                EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE);
+        if (getHealth() > getMaxHealth()) setHealth(getMaxHealth());
     }
 
     // ------------------------------------------------------------------ ticking
@@ -192,6 +294,26 @@ public class WildCatEntity extends CatEntity {
 
         if (jobCooldown > 0) jobCooldown--;
 
+        if (stage == Stage.KIT && !isBaby()) {
+            stage = Stage.APPRENTICE;
+            rankTicks = 0;
+            catName = CatNames.toApprentice(catName);
+            refreshName();
+            refreshBonuses();
+            tellClan(catName + " has grown into an apprentice.");
+        } else if (stage == Stage.APPRENTICE) {
+            rankTicks++;
+            if (rankTicks >= 6000 && age % 100 == 0 && homeHas(CampUpgrade.TRAINING)) {
+                stage = Stage.WARRIOR;
+                catName = CatNames.toWarrior(catName);
+                refreshName();
+                refreshBonuses();
+                tellClan(catName + " finished training and is now a warrior!");
+            }
+        }
+
+        if (age % 200 == 0) refreshBonuses();
+
         if (isFollowing()) {
             // If the player logs off or leaves the dimension, give up and go home.
             if (commander() == null) {
@@ -199,20 +321,21 @@ public class WildCatEntity extends CatEntity {
             } else {
                 lostTicks = 0;
             }
-        } else if (age % 200 == 0 && !hasPositionTarget() && getWorld() instanceof ServerWorld sw) {
-            CampClaims.nearest(sw.getServer(), clanId, getPos()).ifPresent(c -> setPositionTarget(c.center(), 14));
+        } else if (age % 200 == 0 && !hasPositionTarget() && stage != Stage.KIT) {
+            homeClaim().ifPresent(c -> setPositionTarget(c.center(), 14));
         }
 
-        if (job == CatJob.HEALER && age % 100 == 0) healNearbyClanmates();
+        if (job == CatJob.HEALER && stage != Stage.KIT && age % 100 == 0) healNearbyClanmates();
     }
 
     private void healNearbyClanmates() {
+        int amplifier = homeHas(CampUpgrade.HERB_STORE) ? 1 : 0;
         List<ServerPlayerEntity> players = getWorld().getEntitiesByClass(
                 ServerPlayerEntity.class, getBoundingBox().expand(8.0), p -> true);
         for (ServerPlayerEntity p : players) {
             if (!CatAbilities.data(p).clan().equals(clanId)) continue;
             if (p.getHealth() < p.getMaxHealth()) {
-                p.addStatusEffect(new StatusEffectInstance(StatusEffects.REGENERATION, 120, 0));
+                p.addStatusEffect(new StatusEffectInstance(StatusEffects.REGENERATION, 120, amplifier));
                 ((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HAPPY_VILLAGER,
                         p.getX(), p.getBodyY(0.6), p.getZ(), 6, 0.3, 0.4, 0.3, 0.02);
             }
@@ -251,9 +374,7 @@ public class WildCatEntity extends CatEntity {
         followId = null;
         lostTicks = 0;
         refreshName();
-        if (getWorld() instanceof ServerWorld sw) {
-            CampClaims.nearest(sw.getServer(), clanId, getPos()).ifPresent(this::sendHome);
-        }
+        homeClaim().ifPresent(this::sendHome);
     }
 
     private void teleportNear(PlayerEntity boss) {
@@ -282,7 +403,12 @@ public class WildCatEntity extends CatEntity {
 
         if (!isRecruited()) {
             if (CatEvents.CAT_FOOD.contains(held.getItem())) {
-                tryRecruit(sp, data, held);
+                String problem = recruitProblem(sp, data);
+                if (problem != null) {
+                    say(sp, problem);
+                } else {
+                    ServerPlayNetworking.send(sp, new OpenRecruitPayload(getId(), catName));
+                }
             } else {
                 say(sp, pick(WILD_LINES));
             }
@@ -295,10 +421,29 @@ public class WildCatEntity extends CatEntity {
             return ActionResult.SUCCESS;
         }
 
+        // A named name tag renames the cat.
+        if (held.isOf(Items.NAME_TAG) && held.contains(DataComponentTypes.CUSTOM_NAME)) {
+            Text tagName = held.get(DataComponentTypes.CUSTOM_NAME);
+            String renamed = tagName == null ? "" : clean(tagName.getString());
+            if (!renamed.isEmpty()) {
+                catName = renamed;
+                if (!sp.isCreative()) held.decrement(1);
+                refreshName();
+                say(sp, "A new name... " + catName + ". I like it.");
+                return ActionResult.SUCCESS;
+            }
+        }
+
+        if (stage == Stage.KIT) {
+            say(sp, pick(KIT_LINES));
+            return ActionResult.SUCCESS;
+        }
+
         if (sp.isSneaking() && held.isEmpty()) {
             job = job.next();
             jobCooldown = 0;
             refreshName();
+            refreshBonuses();
             say(sp, "Understood. I'll be a " + job.title + " now. (" + job.title + " " + job.blurb + ")");
         } else if (held.isEmpty()) {
             if (isFollowing() && sp.getUuid().equals(followId)) {
@@ -319,38 +464,53 @@ public class WildCatEntity extends CatEntity {
         return ActionResult.SUCCESS;
     }
 
-    private void tryRecruit(ServerPlayerEntity sp, CatData data, ItemStack held) {
-        if (!data.cat()) {
-            say(sp, "A two-leg wants me to join a clan? Come back as a cat. (/cat become)");
-            return;
-        }
+    /** Why this player can't recruit this cat right now, or null if they can. */
+    private String recruitProblem(ServerPlayerEntity sp, CatData data) {
+        if (!data.cat()) return "A two-leg wants me to join a clan? Come back as a cat. (/cat become)";
         CatClan clan = data.clanOpt().orElse(null);
-        if (clan == null) {
-            say(sp, "You're a loner like me. Join a clan first. (/cat clan join <clan>)");
+        if (clan == null) return "You're a loner like me. Join a clan first. (/cat clan join <clan>)";
+        if (getWorld().getRegistryKey() != World.OVERWORLD) return "This place doesn't feel like home. Find me in the overworld.";
+        if (CampClaims.nearest(sp.getServer(), clan.id, getPos()).isEmpty()) {
+            return clan.display + " has no camp. Claim a wild camp first. (/cat clan claim)";
+        }
+        return null;
+    }
+
+    /** Called when the player confirms the recruit screen. */
+    public void completeRecruit(ServerPlayerEntity sp, String requestedName, CatJob chosenJob) {
+        if (isRecruited()) return;
+        CatData data = CatAbilities.data(sp);
+        String problem = recruitProblem(sp, data);
+        if (problem != null) {
+            say(sp, problem);
             return;
         }
-        if (getWorld().getRegistryKey() != World.OVERWORLD) {
-            say(sp, "This place doesn't feel like home. Find me in the overworld.");
+        ItemStack held = sp.getMainHandStack();
+        if (!CatEvents.CAT_FOOD.contains(held.getItem())) {
+            say(sp, "Hold out some fish or meat if you want me to join you.");
             return;
         }
+        CatClan clan = data.clanOpt().orElseThrow();
         Optional<CampClaim> camp = CampClaims.nearest(sp.getServer(), clan.id, getPos());
-        if (camp.isEmpty()) {
-            say(sp, clan.display + " has no camp. Claim a wild camp first. (/cat clan claim)");
-            return;
-        }
 
         if (!sp.isCreative()) held.decrement(1);
+        String cleaned = clean(requestedName);
+        if (!cleaned.isEmpty()) catName = cleaned;
         clanId = clan.id;
-        job = CatJob.HUNTER;
+        job = chosenJob;
+        stage = Stage.WARRIOR;
+        rankTicks = 0;
         jobCooldown = 0;
         followId = null;
-        sendHome(camp.get());
+        camp.ifPresent(this::sendHome);
         refreshName();
+        refreshBonuses();
 
         ((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART, getX(), getBodyY(0.8), getZ(), 8, 0.3, 0.3, 0.3, 0.02);
-        say(sp, "Thank you. I'll join " + clan.display + ". I'll meet you at camp.");
-        sp.sendMessage(Text.literal(catName + " joined " + clan.display + " as a Hunter. Right-click with an empty hand to make them follow or stay. "
-                + "Sneak + right-click changes their job.").formatted(clan.color), false);
+        say(sp, "Thank you. I'll join " + clan.display + " as a " + job.title + ". I'll meet you at camp.");
+        sp.sendMessage(Text.literal(catName + " joined " + clan.display + " as a " + job.title
+                + ". Right-click with an empty hand to make them follow or stay. Sneak + right-click changes their job; "
+                + "a named name tag renames them.").formatted(clan.color), false);
     }
 
     private void sendHome(CampClaim claim) {
@@ -374,14 +534,15 @@ public class WildCatEntity extends CatEntity {
 
     // ------------------------------------------------------------------ hunting
     private void completeHunt(LivingEntity prey) {
+        boolean party = homeHas(CampUpgrade.HUNTING_PARTY);
         ItemStack loot = new ItemStack(
                 prey.getType() == EntityType.COD ? Items.COD
                 : prey.getType() == EntityType.SALMON ? Items.SALMON
                 : prey.getType() == EntityType.TROPICAL_FISH ? Items.TROPICAL_FISH
                 : prey.getType() == EntityType.CHICKEN ? Items.CHICKEN
-                : Items.RABBIT, 1);
+                : Items.RABBIT, party ? 2 : 1);
         prey.discard();
-        jobCooldown = 1200; // a minute between hunts
+        jobCooldown = party ? 600 : 1200;
 
         // While following, the catch goes straight to the player.
         PlayerEntity boss = isFollowing() ? commander() : null;
@@ -441,7 +602,7 @@ public class WildCatEntity extends CatEntity {
 
         @Override
         public boolean canStart() {
-            if (!cat.isRecruited() || cat.job != CatJob.HUNTER || cat.jobCooldown > 0) return false;
+            if (!cat.isRecruited() || cat.job != CatJob.HUNTER || cat.stage == Stage.KIT || cat.jobCooldown > 0) return false;
             PlayerEntity boss = cat.isFollowing() ? cat.commander() : null;
             if (cat.isFollowing() && boss == null) return false;
             if (boss == null && !cat.hasPositionTarget()) return false;
