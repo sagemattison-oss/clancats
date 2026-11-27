@@ -25,6 +25,7 @@ public class ClanCatsClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             CatClientState.tick(client);
             CatClientState.tickClimbing(client);
+            CatClientState.tickPounce(client);
             while (furMenuKey.wasPressed()) {
                 if (client.currentScreen == null && client.player != null) {
                     client.setScreen(new FurScreen());

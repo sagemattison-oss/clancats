@@ -1,0 +1,11 @@
+{
+  "structures": [
+    { "structure": "clancats:surface_camp", "weight": 1 }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 11,
+    "separation": 4,
+    "salt": 1414213562
+  }
+}

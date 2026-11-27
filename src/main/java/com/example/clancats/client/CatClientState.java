@@ -1,6 +1,8 @@
 package com.example.clancats.client;
 
 import com.example.clancats.CatAbilities;
+import com.example.clancats.PouncePayload;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
@@ -122,6 +124,33 @@ public final class CatClientState {
         } else {
             cat.setCustomNameVisible(false);
         }
+    }
+
+    private static boolean prevOnGround = true;
+    private static int pounceCooldown = 0;
+
+    /** Jump while sneaking (stalking) to launch forward in a pounce. The server resolves the hit. */
+    public static void tickPounce(MinecraftClient mc) {
+        ClientPlayerEntity p = mc.player;
+        if (p == null) {
+            prevOnGround = true;
+            return;
+        }
+        if (pounceCooldown > 0) pounceCooldown--;
+
+        boolean onGround = p.isOnGround();
+        boolean jumped = prevOnGround && !onGround && p.getVelocity().y > 0.1;
+        prevOnGround = onGround;
+        if (!jumped || pounceCooldown > 0) return;
+        if (!CatAbilities.isCat(p) || !p.isSneaking() || p.isSpectator()
+                || p.getAbilities().flying || p.isTouchingWater()) return;
+        if (!mc.options.jumpKey.isPressed()) return;
+
+        Vec3d dir = Vec3d.fromPolar(0.0f, p.getYaw());
+        Vec3d v = p.getVelocity();
+        p.setVelocity(v.x + dir.x * 0.75, v.y + 0.12, v.z + dir.z * 0.75);
+        pounceCooldown = 30;
+        ClientPlayNetworking.send(new PouncePayload());
     }
 
     /** Hold jump against logs, leaves or fences to scramble up them. */

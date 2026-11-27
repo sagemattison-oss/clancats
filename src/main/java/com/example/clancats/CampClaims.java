@@ -48,10 +48,10 @@ public final class CampClaims {
     }
 
     /** Fills the 3x3 on top of the Great Rock (clan wool when claimed, stone when released). */
-    public static void setMarker(ServerWorld world, BlockPos center, BlockState state) {
+    public static void setMarker(ServerWorld world, BlockPos center, int markerY, BlockState state) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                world.setBlockState(new BlockPos(center.getX() + dx, center.getY() + 7, center.getZ() + dz), state);
+                world.setBlockState(new BlockPos(center.getX() + dx, center.getY() + markerY, center.getZ() + dz), state);
             }
         }
     }

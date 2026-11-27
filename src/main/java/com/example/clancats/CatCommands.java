@@ -4,7 +4,7 @@ import com.example.clancats.data.CampClaim;
 import com.example.clancats.data.CatClan;
 import com.example.clancats.data.CatData;
 import com.example.clancats.data.CatRank;
-import com.example.clancats.world.CampPiece;
+import com.example.clancats.world.CampSite;
 import com.example.clancats.world.ModStructures;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -205,15 +205,15 @@ public final class CatCommands {
         ServerWorld world = p.getServerWorld();
         if (world.getRegistryKey() != World.OVERWORLD) return fail(c, "Camps are only in the overworld.");
 
-        CampPiece piece = ModStructures.findCamp(world, p.getBlockPos());
+        CampSite piece = ModStructures.findCamp(world, p.getBlockPos());
         if (piece == null) return fail(c, "You need to be inside a wild camp. Try /cat clan findcamp.");
 
         MinecraftServer server = c.getSource().getServer();
         Optional<CampClaim> existing = CampClaims.at(server, piece.center());
         if (existing.isPresent()) return fail(c, "This camp already belongs to " + clanName(existing.get().clan()) + ".");
 
-        CampClaims.add(server, new CampClaim(piece.center(), piece.rot(), clan.id));
-        CampClaims.setMarker(world, piece.center(), clan.marker.getDefaultState());
+        CampClaims.add(server, new CampClaim(piece.center(), piece.rot(), clan.id, piece.markerY()));
+        CampClaims.setMarker(world, piece.center(), piece.markerY(), clan.marker.getDefaultState());
         server.getPlayerManager().broadcast(
                 Text.literal(clan.display + " has claimed a camp!").formatted(clan.color), false);
         return 1;
@@ -223,7 +223,7 @@ public final class CatCommands {
         ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
         CatData d = CatAbilities.data(p);
         ServerWorld world = p.getServerWorld();
-        CampPiece piece = ModStructures.findCamp(world, p.getBlockPos());
+        CampSite piece = ModStructures.findCamp(world, p.getBlockPos());
         if (piece == null) return fail(c, "You need to be inside the camp you want to give up.");
 
         MinecraftServer server = c.getSource().getServer();
@@ -236,7 +236,7 @@ public final class CatCommands {
             return fail(c, "Only an operator, or your own clan's Leader or Deputy, can release this camp.");
         }
         CampClaims.remove(server, claim.get());
-        CampClaims.setMarker(world, piece.center(), Blocks.STONE.getDefaultState());
+        CampClaims.setMarker(world, piece.center(), claim.get().markerY(), Blocks.STONE.getDefaultState());
         say(c, Text.literal("The camp is wild again.").formatted(Formatting.GRAY));
         return 1;
     }

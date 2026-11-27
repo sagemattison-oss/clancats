@@ -19,24 +19,29 @@ public final class ModStructures {
 
     public static final RegistryKey<Structure> CAMP_KEY =
             RegistryKey.of(RegistryKeys.STRUCTURE, ClanCatsMod.id("wild_camp"));
+    /** Matches both the cave camp and the surface camp (see the tag json). */
     public static final TagKey<Structure> CAMP_TAG =
             TagKey.of(RegistryKeys.STRUCTURE, ClanCatsMod.id("wild_camp"));
 
     public static final StructureType<CampStructure> CAMP_TYPE =
             Registry.register(Registries.STRUCTURE_TYPE, ClanCatsMod.id("wild_camp"), () -> CampStructure.CODEC);
-
     public static final StructurePieceType CAMP_PIECE =
             Registry.register(Registries.STRUCTURE_PIECE, ClanCatsMod.id("wild_camp"), CampPiece::new);
+
+    public static final StructureType<SurfaceCampStructure> SURFACE_CAMP_TYPE =
+            Registry.register(Registries.STRUCTURE_TYPE, ClanCatsMod.id("surface_camp"), () -> SurfaceCampStructure.CODEC);
+    public static final StructurePieceType SURFACE_CAMP_PIECE =
+            Registry.register(Registries.STRUCTURE_PIECE, ClanCatsMod.id("surface_camp"), SurfaceCampPiece::new);
 
     /** Call once from the mod initializer so the registrations above happen. */
     public static void register() {}
 
-    /** The wild camp whose bounding box contains this position, or null. */
-    public static CampPiece findCamp(ServerWorld world, BlockPos pos) {
+    /** The camp (cave or surface) whose bounding box contains this position, or null. */
+    public static CampSite findCamp(ServerWorld world, BlockPos pos) {
         StructureStart start = world.getStructureAccessor().getStructureContaining(pos, CAMP_TAG);
         if (!start.hasChildren()) return null;
         for (StructurePiece piece : start.getChildren()) {
-            if (piece instanceof CampPiece camp) return camp;
+            if (piece instanceof CampSite site) return site;
         }
         return null;
     }

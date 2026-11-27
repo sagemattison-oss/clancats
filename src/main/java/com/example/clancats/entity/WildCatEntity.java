@@ -7,6 +7,7 @@ import com.example.clancats.data.CampClaim;
 import com.example.clancats.data.CatClan;
 import com.example.clancats.data.CatData;
 import com.example.clancats.world.CampLayout;
+import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.EntityData;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
@@ -29,9 +30,9 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.particle.ParticleTypes;
-import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Formatting;
@@ -46,10 +47,13 @@ import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * A loner cat. Feed it fish or meat while you belong to a clan with a claimed camp and it joins
- * your clan: it walks (teleports) to your nearest camp and works there as a Hunter, Guard or Healer.
+ * your clan: it goes to your nearest camp and works there as a Hunter, Guard or Healer.
+ * Recruited cats can also be told to follow you; they keep doing their job while they follow,
+ * and go back to the nearest camp when told to stop.
  */
 public class WildCatEntity extends CatEntity {
     private static final String[] NAMES = {
@@ -78,11 +82,18 @@ public class WildCatEntity extends CatEntity {
             "Rest, drink, and let the herbs do their work.",
             "Mind the cobwebs and the moss, they're good for wounds."
     };
+    private static final String[] FOLLOW_LINES = {
+            "Lead the way.",
+            "Right behind you.",
+            "I'll watch your tail."
+    };
 
     private String catName = "";
     private String clanId = "";
     private CatJob job = CatJob.HUNTER;
     private int jobCooldown = 0;
+    private UUID followId = null;
+    private int lostTicks = 0;
 
     public WildCatEntity(EntityType<? extends CatEntity> type, World world) {
         super(type, world);
@@ -92,17 +103,27 @@ public class WildCatEntity extends CatEntity {
         return !clanId.isEmpty();
     }
 
+    public boolean isFollowing() {
+        return followId != null;
+    }
+
     // ------------------------------------------------------------------ setup
     @Override
     protected void initGoals() {
         this.goalSelector.add(1, new SwimGoal(this));
         this.goalSelector.add(2, new MeleeAttackGoal(this, 1.3, true));
         this.goalSelector.add(3, new HuntPreyGoal(this));
-        this.goalSelector.add(6, new WanderAroundFarGoal(this, 0.8));
+        this.goalSelector.add(4, new FollowCommanderGoal(this));
+        this.goalSelector.add(6, new WanderAroundFarGoal(this, 0.8) {
+            @Override
+            public boolean canStart() {
+                return !isFollowing() && super.canStart();
+            }
+        });
         this.goalSelector.add(7, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
         this.goalSelector.add(8, new LookAroundGoal(this));
         this.targetSelector.add(1, new ActiveTargetGoal<>(this, HostileEntity.class, 10, true, false,
-                e -> isRecruited() && job == CatJob.GUARD && !(e instanceof CreeperEntity) && nearHome(e)));
+                e -> isRecruited() && job == CatJob.GUARD && !(e instanceof CreeperEntity) && nearPost(e)));
     }
 
     @Override
@@ -124,6 +145,7 @@ public class WildCatEntity extends CatEntity {
         nbt.putString("CatName", catName);
         nbt.putString("ClanId", clanId);
         nbt.putString("Job", job.name());
+        nbt.putString("Follow", followId == null ? "" : followId.toString());
     }
 
     @Override
@@ -136,6 +158,12 @@ public class WildCatEntity extends CatEntity {
         } catch (IllegalArgumentException e) {
             job = CatJob.HUNTER;
         }
+        String f = nbt.getString("Follow");
+        try {
+            followId = f.isEmpty() ? null : UUID.fromString(f);
+        } catch (IllegalArgumentException e) {
+            followId = null;
+        }
         refreshName();
     }
 
@@ -146,9 +174,11 @@ public class WildCatEntity extends CatEntity {
         if (clan == null) {
             name = Text.literal(catName + " (Loner)").formatted(Formatting.GRAY);
         } else {
+            MutableText tag = Text.literal("(" + job.title + (isFollowing() ? ", following" : "") + ")")
+                    .formatted(Formatting.WHITE);
             name = Text.literal(catName + " ")
                     .append(Text.literal("[" + clan.display + "] ").formatted(clan.color))
-                    .append(Text.literal("(" + job.title + ")").formatted(Formatting.WHITE));
+                    .append(tag);
         }
         setCustomName(name);
         setCustomNameVisible(true);
@@ -162,9 +192,17 @@ public class WildCatEntity extends CatEntity {
 
         if (jobCooldown > 0) jobCooldown--;
 
-        if (age % 200 == 0 && !hasPositionTarget() && getWorld() instanceof ServerWorld sw) {
+        if (isFollowing()) {
+            // If the player logs off or leaves the dimension, give up and go home.
+            if (commander() == null) {
+                if (++lostTicks > 200) stopFollowing();
+            } else {
+                lostTicks = 0;
+            }
+        } else if (age % 200 == 0 && !hasPositionTarget() && getWorld() instanceof ServerWorld sw) {
             CampClaims.nearest(sw.getServer(), clanId, getPos()).ifPresent(c -> setPositionTarget(c.center(), 14));
         }
+
         if (job == CatJob.HEALER && age % 100 == 0) healNearbyClanmates();
     }
 
@@ -181,10 +219,56 @@ public class WildCatEntity extends CatEntity {
         }
     }
 
-    private boolean nearHome(LivingEntity e) {
+    /** The player this cat is following, or null if not following / not around. */
+    private PlayerEntity commander() {
+        if (followId == null) return null;
+        PlayerEntity p = getWorld().getPlayerByUuid(followId);
+        return (p != null && p.isAlive() && !p.isSpectator()) ? p : null;
+    }
+
+    /** Guards defend the camp, or the player they are following. */
+    private boolean nearPost(LivingEntity e) {
+        if (isFollowing()) {
+            PlayerEntity boss = commander();
+            return boss != null && e.squaredDistanceTo(boss) < 16.0 * 16.0;
+        }
         if (!hasPositionTarget()) return false;
         BlockPos h = getPositionTarget();
         return e.squaredDistanceTo(h.getX() + 0.5, h.getY(), h.getZ() + 0.5) < 22.0 * 22.0;
+    }
+
+    // ------------------------------------------------------------------ following
+    private void startFollowing(ServerPlayerEntity sp) {
+        followId = sp.getUuid();
+        lostTicks = 0;
+        clearPositionTarget(); // free to leave the camp area
+        getNavigation().stop();
+        refreshName();
+    }
+
+    /** Stops following and teleports to the nearest camp the clan has claimed. */
+    private void stopFollowing() {
+        followId = null;
+        lostTicks = 0;
+        refreshName();
+        if (getWorld() instanceof ServerWorld sw) {
+            CampClaims.nearest(sw.getServer(), clanId, getPos()).ifPresent(this::sendHome);
+        }
+    }
+
+    private void teleportNear(PlayerEntity boss) {
+        for (int i = 0; i < 10; i++) {
+            double x = boss.getX() + (getRandom().nextDouble() - 0.5) * 6.0;
+            double z = boss.getZ() + (getRandom().nextDouble() - 0.5) * 6.0;
+            double y = boss.getY();
+            if (getWorld().isSpaceEmpty(this, getBoundingBox().offset(x - getX(), y - getY(), z - getZ()))) {
+                refreshPositionAndAngles(x, y, z, getYaw(), getPitch());
+                getNavigation().stop();
+                return;
+            }
+        }
+        refreshPositionAndAngles(boss.getX(), boss.getY(), boss.getZ(), getYaw(), getPitch());
+        getNavigation().stop();
     }
 
     // ------------------------------------------------------------------ talking & recruiting
@@ -216,6 +300,14 @@ public class WildCatEntity extends CatEntity {
             jobCooldown = 0;
             refreshName();
             say(sp, "Understood. I'll be a " + job.title + " now. (" + job.title + " " + job.blurb + ")");
+        } else if (held.isEmpty()) {
+            if (isFollowing() && sp.getUuid().equals(followId)) {
+                stopFollowing();
+                say(sp, "Back to camp, then.");
+            } else {
+                startFollowing(sp);
+                say(sp, pick(FOLLOW_LINES) + " I'll keep working as a " + job.title + " while we travel.");
+            }
         } else {
             String[] lines = switch (job) {
                 case HUNTER -> HUNTER_LINES;
@@ -251,19 +343,20 @@ public class WildCatEntity extends CatEntity {
         clanId = clan.id;
         job = CatJob.HUNTER;
         jobCooldown = 0;
+        followId = null;
         sendHome(camp.get());
         refreshName();
 
         ((ServerWorld) getWorld()).spawnParticles(ParticleTypes.HEART, getX(), getBodyY(0.8), getZ(), 8, 0.3, 0.3, 0.3, 0.02);
         say(sp, "Thank you. I'll join " + clan.display + ". I'll meet you at camp.");
-        sp.sendMessage(Text.literal(catName + " joined " + clan.display + " as a Hunter. Sneak + right-click with an empty hand to change their job.")
-                .formatted(clan.color), false);
+        sp.sendMessage(Text.literal(catName + " joined " + clan.display + " as a Hunter. Right-click with an empty hand to make them follow or stay. "
+                + "Sneak + right-click changes their job.").formatted(clan.color), false);
     }
 
     private void sendHome(CampClaim claim) {
         BlockPos c = claim.center();
         double a = getRandom().nextDouble() * Math.PI * 2.0;
-        double r = 6.0 + getRandom().nextDouble() * 2.0; // ring around the Great Rock
+        double r = 5.5 + getRandom().nextDouble() * 1.3; // ring around the Great Rock, clear of dens and walls
         refreshPositionAndAngles(c.getX() + 0.5 + Math.cos(a) * r, c.getY(), c.getZ() + 0.5 + Math.sin(a) * r,
                 getRandom().nextFloat() * 360.0f, 0.0f);
         getNavigation().stop();
@@ -282,13 +375,21 @@ public class WildCatEntity extends CatEntity {
     // ------------------------------------------------------------------ hunting
     private void completeHunt(LivingEntity prey) {
         ItemStack loot = new ItemStack(
-                prey.getType() == net.minecraft.entity.EntityType.COD ? Items.COD
-                : prey.getType() == net.minecraft.entity.EntityType.SALMON ? Items.SALMON
-                : prey.getType() == net.minecraft.entity.EntityType.TROPICAL_FISH ? Items.TROPICAL_FISH
-                : prey.getType() == net.minecraft.entity.EntityType.CHICKEN ? Items.CHICKEN
+                prey.getType() == EntityType.COD ? Items.COD
+                : prey.getType() == EntityType.SALMON ? Items.SALMON
+                : prey.getType() == EntityType.TROPICAL_FISH ? Items.TROPICAL_FISH
+                : prey.getType() == EntityType.CHICKEN ? Items.CHICKEN
                 : Items.RABBIT, 1);
         prey.discard();
         jobCooldown = 1200; // a minute between hunts
+
+        // While following, the catch goes straight to the player.
+        PlayerEntity boss = isFollowing() ? commander() : null;
+        if (boss != null) {
+            boss.giveItemStack(loot);
+            boss.sendMessage(Text.literal(catName + " caught prey for you.").formatted(Formatting.YELLOW), true);
+            return;
+        }
 
         if (!(getWorld() instanceof ServerWorld sw)) return;
         Optional<CampClaim> camp = CampClaims.nearest(sw.getServer(), clanId, getPos());
@@ -326,7 +427,8 @@ public class WildCatEntity extends CatEntity {
         return false;
     }
 
-    /** Hunters chase prey near the camp, then add it to the fresh-kill barrel. */
+    // ------------------------------------------------------------------ goals
+    /** Hunters chase prey near the camp (or near the player they follow), then deliver it. */
     static class HuntPreyGoal extends Goal {
         private final WildCatEntity cat;
         private LivingEntity prey;
@@ -339,11 +441,17 @@ public class WildCatEntity extends CatEntity {
 
         @Override
         public boolean canStart() {
-            if (!cat.isRecruited() || cat.job != CatJob.HUNTER || cat.jobCooldown > 0 || !cat.hasPositionTarget()) return false;
+            if (!cat.isRecruited() || cat.job != CatJob.HUNTER || cat.jobCooldown > 0) return false;
+            PlayerEntity boss = cat.isFollowing() ? cat.commander() : null;
+            if (cat.isFollowing() && boss == null) return false;
+            if (boss == null && !cat.hasPositionTarget()) return false;
             if (cat.getRandom().nextInt(20) != 0) return false; // don't scan every tick
-            BlockPos home = cat.getPositionTarget();
-            List<LivingEntity> found = cat.getWorld().getEntitiesByClass(LivingEntity.class,
-                    new Box(home).expand(24.0), e -> e.isAlive() && CatEvents.PREY.contains(e.getType()));
+
+            Box area = boss != null
+                    ? boss.getBoundingBox().expand(14.0)
+                    : new Box(cat.getPositionTarget()).expand(24.0);
+            List<LivingEntity> found = cat.getWorld().getEntitiesByClass(LivingEntity.class, area,
+                    e -> e.isAlive() && CatEvents.PREY.contains(e.getType()));
             prey = found.stream().min(Comparator.comparingDouble(cat::squaredDistanceTo)).orElse(null);
             return prey != null;
         }
@@ -373,6 +481,54 @@ public class WildCatEntity extends CatEntity {
         @Override
         public void stop() {
             prey = null;
+            cat.getNavigation().stop();
+        }
+    }
+
+    /** Trails the player; teleports to them if they get far away. Lower priority than hunting. */
+    static class FollowCommanderGoal extends Goal {
+        private final WildCatEntity cat;
+        private int timer;
+
+        FollowCommanderGoal(WildCatEntity cat) {
+            this.cat = cat;
+            setControls(EnumSet.of(Goal.Control.MOVE, Goal.Control.LOOK));
+        }
+
+        @Override
+        public boolean canStart() {
+            PlayerEntity boss = cat.commander();
+            return cat.isFollowing() && boss != null && cat.squaredDistanceTo(boss) > 16.0;
+        }
+
+        @Override
+        public boolean shouldContinue() {
+            PlayerEntity boss = cat.commander();
+            return cat.isFollowing() && boss != null && cat.squaredDistanceTo(boss) > 6.25;
+        }
+
+        @Override
+        public void start() {
+            timer = 0;
+        }
+
+        @Override
+        public void tick() {
+            PlayerEntity boss = cat.commander();
+            if (boss == null) return;
+            cat.getLookControl().lookAt(boss);
+            if (--timer <= 0) {
+                timer = 8;
+                if (cat.squaredDistanceTo(boss) > 576.0) {
+                    cat.teleportNear(boss);
+                } else {
+                    cat.getNavigation().startMovingTo(boss, 1.25);
+                }
+            }
+        }
+
+        @Override
+        public void stop() {
             cat.getNavigation().stop();
         }
     }

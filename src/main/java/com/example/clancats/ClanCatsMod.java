@@ -35,6 +35,7 @@ public class ClanCatsMod implements ModInitializer {
     public void onInitialize() {
         ModEntities.register();
         ModStructures.register();
+        CatPounce.register();
         CatEvents.register();
         CatCommands.register();
     }

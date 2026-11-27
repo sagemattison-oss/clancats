@@ -17,7 +17,7 @@ import net.minecraft.world.gen.StructureAccessor;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
 
 /** One wild camp: carves the cavern, rock, rooms and entrance, then spawns a few wild cats. */
-public class CampPiece extends StructurePiece {
+public class CampPiece extends StructurePiece implements CampSite {
     private final long seed;
     private final int rot;
     private final int cx;
@@ -61,6 +61,11 @@ public class CampPiece extends StructurePiece {
 
     public int rot() {
         return rot;
+    }
+
+    @Override
+    public int markerY() {
+        return CampLayout.ROCK_TOP;
     }
 
     @Override
