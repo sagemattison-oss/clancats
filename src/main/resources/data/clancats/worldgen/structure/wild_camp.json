@@ -1,0 +1,7 @@
+{
+  "type": "clancats:wild_camp",
+  "biomes": "#minecraft:is_overworld",
+  "step": "underground_structures",
+  "spawn_overrides": {},
+  "terrain_adaptation": "none"
+}

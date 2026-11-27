@@ -1,0 +1,11 @@
+{
+  "structures": [
+    { "structure": "clancats:wild_camp", "weight": 1 }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 18,
+    "separation": 7,
+    "salt": 1618033988
+  }
+}

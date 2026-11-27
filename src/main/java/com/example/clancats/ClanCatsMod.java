@@ -1,14 +1,15 @@
 package com.example.clancats;
 
+import com.example.clancats.data.CampClaim;
 import com.example.clancats.data.CatData;
-import com.mojang.serialization.Codec;
+import com.example.clancats.entity.ModEntities;
+import com.example.clancats.world.ModStructures;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
 
-import java.util.Map;
+import java.util.List;
 
 public class ClanCatsMod implements ModInitializer {
     public static final String MOD_ID = "clancats";
@@ -24,14 +25,16 @@ public class ClanCatsMod implements ModInitializer {
             .copyOnDeath()
             .buildAndRegister(id("cat_data"));
 
-    /** Clan camp locations (clan id -> position), stored on the overworld. */
-    public static final AttachmentType<Map<String, BlockPos>> CAMPS = AttachmentRegistry.<Map<String, BlockPos>>builder()
-            .initializer(() -> Map.<String, BlockPos>of())
-            .persistent(Codec.unboundedMap(Codec.STRING, BlockPos.CODEC))
-            .buildAndRegister(id("camps"));
+    /** Claimed wild camps, stored on the overworld. */
+    public static final AttachmentType<List<CampClaim>> CLAIMS = AttachmentRegistry.<List<CampClaim>>builder()
+            .initializer(() -> List.<CampClaim>of())
+            .persistent(CampClaim.CODEC.listOf())
+            .buildAndRegister(id("claims"));
 
     @Override
     public void onInitialize() {
+        ModEntities.register();
+        ModStructures.register();
         CatEvents.register();
         CatCommands.register();
     }

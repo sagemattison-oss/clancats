@@ -34,12 +34,12 @@ public final class CatEvents {
     private CatEvents() {}
 
     /** Animals a cat may hunt for fresh-kill. */
-    private static final Set<EntityType<?>> PREY = Set.of(
+    public static final Set<EntityType<?>> PREY = Set.of(
             EntityType.RABBIT, EntityType.CHICKEN, EntityType.BAT, EntityType.COD,
             EntityType.SALMON, EntityType.TROPICAL_FISH, EntityType.SILVERFISH, EntityType.ENDERMITE);
 
     /** The only foods a cat will eat. */
-    private static final Set<Item> CAT_FOOD = Set.of(
+    public static final Set<Item> CAT_FOOD = Set.of(
             Items.BEEF, Items.COOKED_BEEF, Items.PORKCHOP, Items.COOKED_PORKCHOP,
             Items.CHICKEN, Items.COOKED_CHICKEN, Items.MUTTON, Items.COOKED_MUTTON,
             Items.RABBIT, Items.COOKED_RABBIT, Items.COD, Items.COOKED_COD,
