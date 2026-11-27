@@ -33,7 +33,7 @@ public final class ModStructures {
 
     /** The wild camp whose bounding box contains this position, or null. */
     public static CampPiece findCamp(ServerWorld world, BlockPos pos) {
-        StructureStart start = world.getStructureAccessor().getStructureContaining(pos, CAMP_KEY);
+        StructureStart start = world.getStructureAccessor().getStructureContaining(pos, CAMP_TAG);
         if (!start.hasChildren()) return null;
         for (StructurePiece piece : start.getChildren()) {
             if (piece instanceof CampPiece camp) return camp;
