@@ -34,6 +34,9 @@ public final class CatCommands {
     private static final SuggestionProvider<ServerCommandSource> CLANS = (ctx, builder) ->
             CommandSource.suggestMatching(Arrays.stream(CatClan.values()).map(c -> c.id), builder);
 
+    private static final SuggestionProvider<ServerCommandSource> FURS = (ctx, builder) ->
+            CommandSource.suggestMatching(CatVariants.namesWithDefault(), builder);
+
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 literal("cat")
@@ -50,6 +53,8 @@ public final class CatCommands {
                                 .then(literal("list").executes(CatCommands::listClans))
                                 .then(literal("camp").executes(CatCommands::camp))
                                 .then(literal("setcamp").executes(CatCommands::setCamp)))
+                        .then(literal("fur").then(argument("variant", StringArgumentType.word())
+                                .suggests(FURS).executes(CatCommands::setFur)))
                         .then(literal("setprey").requires(s -> s.hasPermissionLevel(2))
                                 .then(argument("targets", EntityArgumentType.players())
                                         .then(argument("amount", IntegerArgumentType.integer(0))
@@ -99,6 +104,20 @@ public final class CatCommands {
         ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
         if (!CatAbilities.data(p).cat()) return fail(c, "Only cats can do that.");
         p.getServerWorld().playSound(null, p.getBlockPos(), ev, SoundCategory.PLAYERS, 1.0f, 1.0f);
+        return 1;
+    }
+
+    private static int setFur(CommandContext<ServerCommandSource> c) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
+        CatData d = CatAbilities.data(p);
+        if (!d.cat()) return fail(c, "Become a cat first (/cat become).");
+        String v = StringArgumentType.getString(c, "variant").toLowerCase(java.util.Locale.ROOT);
+        boolean reset = v.equals("default");
+        if (!reset && !CatVariants.names().contains(v)) return fail(c, "Unknown fur: " + v);
+        p.setAttached(ClanCatsMod.CAT_DATA, d.withFur(reset ? "" : v));
+        CatAbilities.apply(p);
+        say(c, Text.literal(reset ? "Your coat returns to its natural pattern."
+                : "Your coat is now " + CatVariants.pretty(v) + ".").formatted(Formatting.GOLD));
         return 1;
     }
 

@@ -20,12 +20,16 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
+
 /**
  * Cat form is expressed purely through entity attribute modifiers. Attributes are synced to
  * every client, so clients can tell who is a cat (see {@link #isCat}) without custom networking.
  */
 public final class CatAbilities {
     public static final Identifier FORM_ID = ClanCatsMod.id("cat_form");
+    /** Fur choice rides along as a zero-value modifier named "clancats:fur/<variant>" (attributes sync to clients). */
+    private static final String FUR_PREFIX = "fur/";
 
     private CatAbilities() {}
 
@@ -33,6 +37,34 @@ public final class CatAbilities {
     public static boolean isCat(PlayerEntity player) {
         EntityAttributeInstance scale = player.getAttributeInstance(EntityAttributes.GENERIC_SCALE);
         return scale != null && scale.hasModifier(FORM_ID);
+    }
+
+    /** Fur variant name chosen by this player, or "" for the default pattern. Works on both sides. */
+    public static String furOf(PlayerEntity player) {
+        EntityAttributeInstance scale = player.getAttributeInstance(EntityAttributes.GENERIC_SCALE);
+        if (scale == null) return "";
+        for (EntityAttributeModifier m : scale.getModifiers()) {
+            Identifier id = m.id();
+            if (id.getNamespace().equals(ClanCatsMod.MOD_ID) && id.getPath().startsWith(FUR_PREFIX)) {
+                return id.getPath().substring(FUR_PREFIX.length());
+            }
+        }
+        return "";
+    }
+
+    private static void updateFur(ServerPlayerEntity p, CatData d) {
+        EntityAttributeInstance scale = p.getAttributeInstance(EntityAttributes.GENERIC_SCALE);
+        if (scale == null) return;
+        for (EntityAttributeModifier m : new ArrayList<>(scale.getModifiers())) {
+            Identifier id = m.id();
+            if (id.getNamespace().equals(ClanCatsMod.MOD_ID) && id.getPath().startsWith(FUR_PREFIX)) {
+                scale.removeModifier(id);
+            }
+        }
+        if (d.cat() && !d.fur().isEmpty()) {
+            scale.addPersistentModifier(new EntityAttributeModifier(
+                    ClanCatsMod.id(FUR_PREFIX + d.fur()), 0.0, Operation.ADD_VALUE));
+        }
     }
 
     public static CatData data(ServerPlayerEntity p) {
@@ -52,6 +84,8 @@ public final class CatAbilities {
         set(p, EntityAttributes.GENERIC_STEP_HEIGHT, 0.4, Operation.ADD_VALUE, cat);         // hops up full blocks
         set(p, EntityAttributes.GENERIC_ATTACK_DAMAGE, rank.attackBonus, Operation.ADD_VALUE, cat);
         set(p, EntityAttributes.GENERIC_MAX_HEALTH, rank.healthBonus, Operation.ADD_VALUE, cat);
+
+        updateFur(p, d);
 
         if (p.getHealth() > p.getMaxHealth()) p.setHealth(p.getMaxHealth());
         updateTeam(p, d);

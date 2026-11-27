@@ -28,6 +28,8 @@ import java.util.UUID;
  */
 public final class CatClientState {
     private static final Map<UUID, CatEntity> CATS = new HashMap<>();
+    /** Fur name last applied to each dummy cat ("" = default). */
+    private static final Map<UUID, String> FUR = new HashMap<>();
 
     private CatClientState() {}
 
@@ -40,30 +42,48 @@ public final class CatClientState {
         CatEntity cat = CATS.get(p.getUuid());
         if (cat == null || cat.getWorld() != p.getWorld()) {
             cat = new CatEntity(EntityType.CAT, p.getWorld());
-            // Fur pattern is picked from the player's UUID so everyone sees the same cat.
-            List<RegistryEntry.Reference<CatVariant>> variants = Registries.CAT_VARIANT.streamEntries().toList();
-            if (!variants.isEmpty()) {
-                cat.setVariant(variants.get(Math.floorMod(p.getUuid().hashCode(), variants.size())));
-            }
             CATS.put(p.getUuid(), cat);
+            FUR.remove(p.getUuid());
         }
+        applyFur(p, cat);
         return cat;
+    }
+
+    /** Uses the player's chosen fur, or a pattern picked from their UUID if they have none. */
+    private static void applyFur(AbstractClientPlayerEntity p, CatEntity cat) {
+        String fur = CatAbilities.furOf(p);
+        if (fur.equals(FUR.get(p.getUuid()))) return;
+        FUR.put(p.getUuid(), fur);
+
+        List<RegistryEntry.Reference<CatVariant>> variants = Registries.CAT_VARIANT.streamEntries().toList();
+        RegistryEntry.Reference<CatVariant> pick = null;
+        if (!fur.isEmpty()) {
+            for (RegistryEntry.Reference<CatVariant> v : variants) {
+                if (v.registryKey().getValue().getPath().equals(fur)) pick = v;
+            }
+        }
+        if (pick == null && !variants.isEmpty()) {
+            pick = variants.get(Math.floorMod(p.getUuid().hashCode(), variants.size()));
+        }
+        if (pick != null) cat.setVariant(pick);
     }
 
     public static void clear() {
         CATS.clear();
+        FUR.clear();
     }
 
     public static void tick(MinecraftClient mc) {
         ClientWorld world = mc.world;
         if (world == null) {
-            CATS.clear();
+            clear();
             return;
         }
         for (AbstractClientPlayerEntity p : world.getPlayers()) {
             CatEntity cat = catFor(p);
             if (cat == null) {
                 CATS.remove(p.getUuid());
+                FUR.remove(p.getUuid());
                 continue;
             }
             sync(mc, p, cat);
