@@ -466,12 +466,12 @@ public class WildCatEntity extends CatEntity {
 
     /** Why this player can't recruit this cat right now, or null if they can. */
     private String recruitProblem(ServerPlayerEntity sp, CatData data) {
-        if (!data.cat()) return "A two-leg wants me to join a clan? Come back as a cat. (/cat become)";
+        if (!data.cat()) return "A two-leg wants me to join a clan? Come back as a cat. (press J)";
         CatClan clan = data.clanOpt().orElse(null);
-        if (clan == null) return "You're a loner like me. Join a clan first. (/cat clan join <clan>)";
+        if (clan == null) return "You're a loner like me. Join a clan first. (press J)";
         if (getWorld().getRegistryKey() != World.OVERWORLD) return "This place doesn't feel like home. Find me in the overworld.";
         if (CampClaims.nearest(sp.getServer(), clan.id, getPos()).isEmpty()) {
-            return clan.display + " has no camp. Claim a wild camp first. (/cat clan claim)";
+            return clan.display + " has no camp. Claim a wild camp first. Walk into one and a claim prompt appears.";
         }
         return null;
     }

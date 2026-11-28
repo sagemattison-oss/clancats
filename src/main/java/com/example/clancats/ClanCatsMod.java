@@ -37,6 +37,7 @@ public class ClanCatsMod implements ModInitializer {
         ModStructures.register();
         CatPounce.register();
         RecruitNetworking.register();
+        MenuNetworking.register();
         CampManager.register();
         CatEvents.register();
         CatCommands.register();

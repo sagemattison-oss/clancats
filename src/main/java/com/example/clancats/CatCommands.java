@@ -4,39 +4,33 @@ import com.example.clancats.data.CampClaim;
 import com.example.clancats.data.CatClan;
 import com.example.clancats.data.CatData;
 import com.example.clancats.data.CatRank;
-import com.example.clancats.world.CampSite;
-import com.example.clancats.world.ModStructures;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.minecraft.block.Blocks;
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.inventory.Inventory;
-import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.function.Function;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
+/**
+ * The /cat commands. Everything here is also available from the menus (press J, or /cat menu);
+ * both routes call {@link CatActions}, so they always behave the same.
+ */
 public final class CatCommands {
     private CatCommands() {}
 
@@ -52,26 +46,33 @@ public final class CatCommands {
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 literal("cat")
-                        .then(literal("become").executes(c -> become(c, true)))
-                        .then(literal("revert").executes(c -> become(c, false)))
+                        .then(literal("menu").executes(CatCommands::menu))
+                        .then(literal("become").executes(c -> exec(c, p -> CatActions.become(p, true), true)))
+                        .then(literal("revert").executes(c -> exec(c, p -> CatActions.become(p, false), true)))
                         .then(literal("status").executes(CatCommands::status))
-                        .then(literal("meow").executes(c -> sound(c, SoundEvents.ENTITY_CAT_AMBIENT)))
-                        .then(literal("purr").executes(c -> sound(c, SoundEvents.ENTITY_CAT_PURR)))
-                        .then(literal("hiss").executes(c -> sound(c, SoundEvents.ENTITY_CAT_HISS)))
+                        .then(literal("meow").executes(c -> exec(c, p -> CatActions.sound(p, "meow"), false)))
+                        .then(literal("purr").executes(c -> exec(c, p -> CatActions.sound(p, "purr"), false)))
+                        .then(literal("hiss").executes(c -> exec(c, p -> CatActions.sound(p, "hiss"), false)))
                         .then(literal("fur").then(argument("variant", StringArgumentType.word())
                                 .suggests(FURS).executes(CatCommands::setFur)))
                         .then(literal("clan")
                                 .then(literal("join").then(argument("clan", StringArgumentType.word())
-                                        .suggests(CLANS).executes(CatCommands::joinClan)))
-                                .then(literal("leave").executes(CatCommands::leaveClan))
+                                        .suggests(CLANS).executes(c -> {
+                                            String id = StringArgumentType.getString(c, "clan");
+                                            return exec(c, p -> CatActions.joinClan(p, id), false);
+                                        })))
+                                .then(literal("leave").executes(c -> exec(c, CatActions::leaveClan, true)))
                                 .then(literal("list").executes(CatCommands::listClans))
-                                .then(literal("camp").executes(CatCommands::camp))
-                                .then(literal("findcamp").executes(CatCommands::findCamp))
-                                .then(literal("claim").executes(CatCommands::claimCamp))
-                                .then(literal("unclaim").executes(CatCommands::unclaimCamp))
+                                .then(literal("camp").executes(c -> exec(c, CatActions::camp, true)))
+                                .then(literal("findcamp").executes(c -> exec(c, CatActions::findCamp, true)))
+                                .then(literal("claim").executes(c -> exec(c, CatActions::claimCamp, false)))
+                                .then(literal("unclaim").executes(c -> exec(c, CatActions::unclaimCamp, true)))
                                 .then(literal("upgrade").executes(CatCommands::upgradeInfo)
                                         .then(argument("id", StringArgumentType.word())
-                                                .suggests(UPGRADES).executes(CatCommands::buyUpgrade))))
+                                                .suggests(UPGRADES).executes(c -> {
+                                                    String id = StringArgumentType.getString(c, "id");
+                                                    return exec(c, p -> CatActions.buyUpgrade(p, id), false);
+                                                }))))
                         .then(literal("setprey").requires(s -> s.hasPermissionLevel(2))
                                 .then(argument("targets", EntityArgumentType.players())
                                         .then(argument("amount", IntegerArgumentType.integer(0))
@@ -89,32 +90,25 @@ public final class CatCommands {
         return 0;
     }
 
-    private static String clanName(String id) {
-        return CatClan.byId(id).map(cl -> cl.display).orElse("another clan");
-    }
-
-    private static void tellClan(MinecraftServer server, String clanId, String msg) {
-        Formatting color = CatClan.byId(clanId).map(cl -> cl.color).orElse(Formatting.WHITE);
-        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
-            if (CatAbilities.data(p).clan().equals(clanId)) {
-                p.sendMessage(Text.literal(msg).formatted(color), false);
-            }
-        }
-    }
-
-    // ---- cat form ----
-    private static int become(CommandContext<ServerCommandSource> c, boolean cat) throws CommandSyntaxException {
+    /** Runs a shared action for the command's player and reports its result. */
+    private static int exec(CommandContext<ServerCommandSource> c, Function<ServerPlayerEntity, CatActions.Result> action,
+                            boolean feedback) throws CommandSyntaxException {
         ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        if (d.cat() == cat) return fail(c, cat ? "You are already a cat." : "You are not a cat.");
-        p.setAttached(ClanCatsMod.CAT_DATA, d.withCat(cat));
-        CatAbilities.apply(p);
-        say(c, Text.literal(cat
-                ? "Your senses sharpen and the world grows huge. You are a cat. Try /cat clan findcamp."
-                : "Your paws become hands once more.").formatted(Formatting.GOLD));
+        CatActions.Result r = action.apply(p);
+        if (!r.ok()) {
+            c.getSource().sendError(r.text());
+            return 0;
+        }
+        if (feedback) c.getSource().sendFeedback(r::text, false);
         return 1;
     }
 
+    private static int menu(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
+        MenuNetworking.sendMenu(c.getSource().getPlayerOrThrow(), "hub", null, false, false);
+        return 1;
+    }
+
+    // ---- info and fur (kept as commands; menus have their own screens for these) ----
     private static int status(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
         ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
         CatData d = CatAbilities.data(p);
@@ -127,13 +121,6 @@ public final class CatCommands {
         sb.append("\nClan: ").append(d.clanOpt().map(cl -> cl.display).orElse("Loner"));
         if (r == CatRank.LEADER) sb.append("\nLives: ").append(d.lives()).append("/9");
         say(c, Text.literal(sb.toString()).formatted(r.color));
-        return 1;
-    }
-
-    private static int sound(CommandContext<ServerCommandSource> c, SoundEvent ev) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        if (!CatAbilities.data(p).cat()) return fail(c, "Only cats can do that.");
-        p.getServerWorld().playSound(null, p.getBlockPos(), ev, SoundCategory.PLAYERS, 1.0f, 1.0f);
         return 1;
     }
 
@@ -151,31 +138,6 @@ public final class CatCommands {
         return 1;
     }
 
-    // ---- clans ----
-    private static int joinClan(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        if (!d.cat()) return fail(c, "Become a cat first (/cat become).");
-        String id = StringArgumentType.getString(c, "clan");
-        CatClan clan = CatClan.byId(id).orElse(null);
-        if (clan == null) return fail(c, "Unknown clan: " + id);
-        p.setAttached(ClanCatsMod.CAT_DATA, d.withClan(clan.id));
-        CatAbilities.apply(p);
-        p.getServer().getPlayerManager().broadcast(
-                Text.literal(p.getName().getString() + " joined " + clan.display + ".").formatted(clan.color), false);
-        return 1;
-    }
-
-    private static int leaveClan(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        if (d.clanOpt().isEmpty()) return fail(c, "You are already a loner.");
-        p.setAttached(ClanCatsMod.CAT_DATA, d.withClan(""));
-        CatAbilities.apply(p);
-        say(c, Text.literal("You leave your clan and walk alone.").formatted(Formatting.GRAY));
-        return 1;
-    }
-
     private static int listClans(CommandContext<ServerCommandSource> c) {
         MinecraftServer server = c.getSource().getServer();
         List<CampClaim> claims = CampClaims.all(server);
@@ -188,116 +150,22 @@ public final class CatCommands {
         return 1;
     }
 
-    private static int camp(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatClan clan = CatAbilities.data(p).clanOpt().orElse(null);
-        if (clan == null) return fail(c, "Loners have no camp. Join one with /cat clan join <clan>.");
-        Optional<CampClaim> camp = CampClaims.nearest(c.getSource().getServer(), clan.id, p.getPos());
-        if (camp.isEmpty()) return fail(c, clan.display + " has no camp yet. Find one with /cat clan findcamp, then /cat clan claim.");
-        BlockPos pos = camp.get().center();
-        int dist = (int) Math.sqrt(p.squaredDistanceTo(pos.getX() + 0.5, p.getY(), pos.getZ() + 0.5));
-        say(c, Text.literal("Nearest " + clan.display + " camp: " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
-                + " (" + dist + " blocks away, " + camp.get().upgrades().size() + "/" + CampUpgrade.values().length
-                + " upgrades). /cat clan upgrade shows the tree.").formatted(clan.color));
-        return 1;
-    }
-
-    private static int findCamp(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        ServerWorld world = p.getServerWorld();
-        if (world.getRegistryKey() != World.OVERWORLD) return fail(c, "Wild camps are only in the overworld.");
-        BlockPos found = world.locateStructure(ModStructures.CAMP_TAG, p.getBlockPos(), 64, false);
-        if (found == null) return fail(c, "No wild camp found nearby. Keep exploring.");
-        int dist = (int) Math.sqrt(p.squaredDistanceTo(found.getX() + 0.5, p.getY(), found.getZ() + 0.5));
-        say(c, Text.literal("Nearest wild camp: x " + found.getX() + ", z " + found.getZ()
-                + " (" + dist + " blocks away). Cave camps have a cave mouth in the ground and ladder shafts "
-                + "marked by log posts; surface camps are a hedged clearing.").formatted(Formatting.GOLD));
-        return 1;
-    }
-
-    private static int claimCamp(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        CatClan clan = d.clanOpt().orElse(null);
-        if (clan == null) return fail(c, "Join a clan first (/cat clan join <clan>).");
-        boolean allowed = p.hasPermissionLevel(2) || d.rank().ordinal() >= CatRank.WARRIOR.ordinal();
-        if (!allowed) return fail(c, "Only a Warrior or higher (or an operator) can claim a camp.");
-        ServerWorld world = p.getServerWorld();
-        if (world.getRegistryKey() != World.OVERWORLD) return fail(c, "Camps are only in the overworld.");
-
-        CampSite piece = ModStructures.findCamp(world, p.getBlockPos());
-        if (piece == null) return fail(c, "You need to be inside a wild camp. Try /cat clan findcamp.");
-
-        MinecraftServer server = c.getSource().getServer();
-        Optional<CampClaim> existing = CampClaims.at(server, piece.center());
-        if (existing.isPresent()) return fail(c, "This camp already belongs to " + clanName(existing.get().clan()) + ".");
-
-        CampClaim claim = new CampClaim(piece.center(), piece.rot(), clan.id, piece.markerY(), piece.kind(), List.of());
-        CampClaims.add(server, claim);
-        CampClaims.setMarker(world, piece.center(), piece.markerY(), clan.marker.getDefaultState());
-        CampManager.refreshBanners(world, claim);
-        server.getPlayerManager().broadcast(
-                Text.literal(clan.display + " has claimed a camp! Stock its fresh-kill barrel and use /cat clan upgrade to grow it.")
-                        .formatted(clan.color), false);
-        return 1;
-    }
-
-    private static int unclaimCamp(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        ServerWorld world = p.getServerWorld();
-        CampSite piece = ModStructures.findCamp(world, p.getBlockPos());
-        if (piece == null) return fail(c, "You need to be inside the camp you want to give up.");
-
-        MinecraftServer server = c.getSource().getServer();
-        Optional<CampClaim> claim = CampClaims.at(server, piece.center());
-        if (claim.isEmpty()) return fail(c, "This camp isn't claimed.");
-
-        boolean op = p.hasPermissionLevel(2);
-        boolean leadership = d.rank() == CatRank.LEADER || d.rank() == CatRank.DEPUTY;
-        if (!op && !(leadership && claim.get().clan().equals(d.clan()))) {
-            return fail(c, "Only an operator, or your own clan's Leader or Deputy, can release this camp.");
-        }
-        CampClaims.remove(server, claim.get());
-        CampClaims.setMarker(world, piece.center(), claim.get().markerY(), Blocks.STONE.getDefaultState());
-        CampManager.removeBanners(world, claim.get());
-        say(c, Text.literal("The camp is wild again.").formatted(Formatting.GRAY));
-        return 1;
-    }
-
-    // ---- camp upgrades ----
-    /** The player's clan camp nearest to them, if they're close enough to use it; otherwise reports why and returns null. */
-    private static CampClaim ownCampNear(CommandContext<ServerCommandSource> c, ServerPlayerEntity p) {
-        CatClan clan = CatAbilities.data(p).clanOpt().orElse(null);
-        if (clan == null) {
-            fail(c, "Join a clan first (/cat clan join <clan>).");
-            return null;
-        }
-        Optional<CampClaim> camp = CampClaims.nearest(c.getSource().getServer(), clan.id, p.getPos());
-        if (camp.isEmpty()) {
-            fail(c, clan.display + " has no camp yet. Claim one with /cat clan claim.");
-            return null;
-        }
-        BlockPos b = camp.get().center();
-        if (Math.hypot(p.getX() - b.getX(), p.getZ() - b.getZ()) > 48.0) {
-            fail(c, "Go to your camp first (x " + b.getX() + ", z " + b.getZ() + ").");
-            return null;
-        }
-        return camp.get();
-    }
-
     private static int upgradeInfo(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
         ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CampClaim claim = ownCampNear(c, p);
-        if (claim == null) return 0;
+        CatActions.Own own = CatActions.ownCampNear(p);
+        if (own.claim() == null) {
+            c.getSource().sendError(own.error().text());
+            return 0;
+        }
+        CampClaim claim = own.claim();
         CatClan clan = CatClan.byId(claim.clan()).orElse(null);
 
         Inventory barrel = CampManager.barrel(p.getServerWorld(), claim);
         Map<CampResource, Integer> stock = barrel == null ? null : CampManager.stock(barrel);
 
         StringBuilder sb = new StringBuilder();
-        sb.append(clan != null ? clan.display : "Clan").append(" camp upgrades. Put prey, wool, wheat/hay and herbs in the camp's "
-                + "fresh-kill barrel, then run /cat clan upgrade <id>.\n");
+        sb.append(clan != null ? clan.display : "Clan").append(" camp upgrades. Right-click the camp's fresh-kill barrel "
+                + "for the upgrade menu, or run /cat clan upgrade <id>.\n");
         if (stock == null) {
             sb.append("(Can't see the barrel from here. Stand closer to camp.)\n");
         } else {
@@ -325,45 +193,6 @@ public final class CatCommands {
             sb.append('\n');
         }
         say(c, Text.literal(sb.toString().trim()).formatted(clan != null ? clan.color : Formatting.WHITE));
-        return 1;
-    }
-
-    private static int buyUpgrade(CommandContext<ServerCommandSource> c) throws CommandSyntaxException {
-        ServerPlayerEntity p = c.getSource().getPlayerOrThrow();
-        CatData d = CatAbilities.data(p);
-        String id = StringArgumentType.getString(c, "id");
-        CampUpgrade up = CampUpgrade.byId(id).orElse(null);
-        if (up == null) return fail(c, "Unknown upgrade: " + id + ". /cat clan upgrade lists them.");
-        boolean allowed = p.hasPermissionLevel(2) || d.rank().ordinal() >= CatRank.WARRIOR.ordinal();
-        if (!allowed) return fail(c, "Only a Warrior or higher (or an operator) can spend the camp's stores.");
-
-        CampClaim claim = ownCampNear(c, p);
-        if (claim == null) return 0;
-        if (claim.has(up)) return fail(c, "Your camp already has " + up.title + ".");
-        for (String req : up.requires) {
-            if (!claim.upgrades().contains(req)) {
-                String need = CampUpgrade.byId(req).map(u -> u.title).orElse(req);
-                return fail(c, up.title + " needs " + need + " first.");
-            }
-        }
-
-        ServerWorld world = p.getServerWorld();
-        Inventory barrel = CampManager.barrel(world, claim);
-        if (barrel == null) return fail(c, "Can't reach the fresh-kill barrel. Stand closer to camp.");
-        if (!CampManager.canAfford(CampManager.stock(barrel), up)) {
-            return fail(c, "Not enough in the fresh-kill barrel. " + up.title + " costs " + up.costString() + ".");
-        }
-
-        MinecraftServer server = c.getSource().getServer();
-        CampManager.pay(barrel, up);
-        CampClaim updated = claim.withUpgrade(up);
-        CampClaims.replace(server, claim, updated);
-        CampManager.refreshBanners(world, updated);
-
-        BlockPos b = claim.center();
-        world.spawnParticles(ParticleTypes.HAPPY_VILLAGER, b.getX() + 0.5, b.getY() + 3.0, b.getZ() + 0.5, 40, 3.0, 1.5, 3.0, 0.1);
-        world.playSound(null, b, SoundEvents.BLOCK_BEACON_POWER_SELECT, SoundCategory.PLAYERS, 1.0f, 1.2f);
-        tellClan(server, claim.clan(), clanName(claim.clan()) + " camp upgraded: " + up.title + ". " + up.blurb);
         return 1;
     }
 
